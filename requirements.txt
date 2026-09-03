@@ -1,0 +1,32 @@
+# Deps for nyiso_phase1_eda_training.ipynb.
+#
+# Floors are set to the versions this notebook's stored outputs were actually
+# produced with (Python 3.11, 2026-09-01) — anything older is untested here.
+# Every package the notebook imports directly is listed, even where another
+# dep would pull it in anyway.
+#
+#     python3.11 -m venv env && ./env/bin/pip install -r requirements.txt
+
+# --- data + numerics ---
+pandas>=2.3
+numpy>=2.4
+
+# --- API clients (EIA v2 demand, NOAA CDO weather) ---
+requests>=2.34
+
+# --- features ---
+holidays>=0.103          # US federal holidays; notebook degrades to is_holiday=0 without it
+
+# --- model + metrics ---
+xgboost>=3.2
+scikit-learn>=1.9
+
+# --- experiment tracking ---
+mlflow>=3.15
+
+# --- plotting ---
+matplotlib>=3.11
+
+# --- running the notebook itself ---
+jupyterlab>=4.6
+ipykernel>=7.3
