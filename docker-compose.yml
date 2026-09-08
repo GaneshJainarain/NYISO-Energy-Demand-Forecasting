@@ -1,0 +1,109 @@
+# Local Airflow for the NYISO pipeline.
+#
+#   cp .env.airflow.example .env.airflow   # fill in your API keys
+#   docker compose --env-file .env.airflow up -d
+#   open http://localhost:8080             # airflow / airflow
+#
+# The project root is mounted at /opt/airflow/project, which is what the DAG's
+# bash commands cd into. data/ and mlflow.db are therefore written straight
+# back to your working copy - convenient locally, and the reason this is a dev
+# setup rather than anything you would deploy.
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    # Credentials for scripts/ingest.py, passed through from .env.airflow.
+    EIA_API_KEY: ${EIA_API_KEY}
+    NOAA_TOKEN: ${NOAA_TOKEN}
+    # Keep MLflow writing to the project's sqlite store.
+    MLFLOW_TRACKING_URI: sqlite:////opt/airflow/project/mlflow.db
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - .:/opt/airflow/project
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username "${_AIRFLOW_WWW_USER_USERNAME:-airflow}" \
+          --password "${_AIRFLOW_WWW_USER_PASSWORD:-airflow}" \
+          --firstname admin --lastname admin --role Admin \
+          --email admin@example.com || true
+    environment:
+      <<: *airflow-common-env
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-db:

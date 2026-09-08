@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.airflow.example
 
 # --- virtualenv ---
 env/
@@ -19,6 +20,9 @@ data/raw/
 # --- mlflow local tracking ---
 mlflow.db
 mlruns/
+
+# --- airflow local run ---
+logs/
 
 # --- editor / os ---
 .DS_Store

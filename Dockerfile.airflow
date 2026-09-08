@@ -1,0 +1,7 @@
+# Airflow image with the pipeline's runtime deps baked in.
+# Building them into the image beats _PIP_ADDITIONAL_REQUIREMENTS, which
+# re-installs on every container start.
+FROM apache/airflow:3.3.1
+
+COPY requirements-pipeline.txt /tmp/requirements-pipeline.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-pipeline.txt

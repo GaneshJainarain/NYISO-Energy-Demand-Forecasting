@@ -1,0 +1,11 @@
+# Runtime deps for scripts/ only - no Jupyter, no matplotlib.
+# Used to build the Airflow image (see Dockerfile.airflow); requirements.txt
+# remains the full set for running the notebook locally.
+pandas>=2.3
+numpy>=2.4
+pyarrow>=25.0
+requests>=2.34
+holidays>=0.103
+xgboost>=3.2
+scikit-learn>=1.9
+mlflow>=3.15

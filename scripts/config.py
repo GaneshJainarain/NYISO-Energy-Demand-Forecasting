@@ -47,6 +47,30 @@ FEATURE_COLS = [
 ]
 
 
+# --- training ------------------------------------------------------------
+EXPERIMENT_NAME = "nyiso-daily-peak-demand"
+
+# Local tracking store. Point MLFLOW_TRACKING_URI at a real server when this
+# leaves the laptop; artifacts are what grow (~750 KB per logged model), not
+# the metadata.
+DEFAULT_TRACKING_URI = f"sqlite:///{ROOT / 'mlflow.db'}"
+
+VALIDATION_WEEKS = 8
+
+XGB_PARAMS = {
+    "n_estimators": 300,
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42,
+}
+
+
+def tracking_uri():
+    return os.environ.get("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
+
+
 def load_dotenv(path=None):
     """Minimal .env loader so we don't need python-dotenv."""
     p = Path(path) if path else ROOT / ".env"

@@ -43,14 +43,22 @@ Worst single day: 2026-07-16, 2,380 MW off.
 
 ```
 .
-├── nyiso_phase1_eda_training.ipynb   # the entire project — 46 cells, §0–10
-├── nyiso_phase1_eda_training.ipynb.bak
+├── nyiso_phase1_eda_training.ipynb   # the EDA record — 46 cells, §0–10
+├── scripts/
+│   ├── config.py                     # shared paths, FEATURE_COLS, balance point
+│   ├── ingest.py                     # EIA + NOAA → data/raw/*.parquet (incremental)
+│   ├── preprocess.py                 # raw → features + weekly totals
+│   └── train.py                      # split, XGBoost, MLflow, champion gate
+├── dags/nyiso_pipeline.py            # Airflow DAG wiring the three together
+├── docker-compose.yml                # local Airflow (postgres + scheduler + API)
+├── Dockerfile.airflow
 ├── data/
-│   ├── nyiso_daily_features.csv      # 2,785 rows × 19 cols, the modelling table
-│   └── nyiso_weekly_demand.csv       # 401 weeks, second target (not yet modelled)
-├── mlflow.db                         # MLflow tracking store (SQLite)
-├── mlruns/                           # logged model artifacts
-├── requirements.txt
+│   ├── raw/                          # parquet ingest cache (gitignored)
+│   ├── nyiso_daily_features.csv      # the modelling table
+│   └── nyiso_weekly_demand.csv       # second target (not yet modelled)
+├── mlflow.db, mlruns/                # tracking store + artifacts (gitignored)
+├── requirements.txt                  # full set, incl. notebook
+├── requirements-pipeline.txt         # scripts only — no Jupyter/matplotlib
 └── .env                              # EIA_API_KEY, NOAA_TOKEN — never commit
 ```
 
@@ -90,6 +98,68 @@ To browse the tracked runs:
 ```
 
 ---
+
+## Running the pipeline
+
+The notebook is the exploratory record. The reproducible path is three scripts,
+split at the raw/processed boundary so that iterating on features never re-pulls
+seven years from two APIs.
+
+```bash
+python scripts/ingest.py       # EIA + NOAA → data/raw/*.parquet
+python scripts/preprocess.py   # raw → data/nyiso_daily_features.csv
+python scripts/train.py        # split, fit, log to MLflow
+```
+
+**Ingest is incremental.** It reads the high-water mark from the parquet and
+requests only what is missing, *minus* a 7-day window, because EIA revises
+recently published figures — a pure append would freeze the first value it ever
+saw. Fresh rows win on overlap.
+
+| | Time |
+|---|---:|
+| Cold pull, 2019 → today | 45s |
+| Incremental re-run | 1.7s |
+
+`--full` forces a complete refetch, `--source eia|noaa` runs one side.
+
+**Preprocess is pure** — no network, no keys. `--check` compares its output
+against the committed CSV instead of overwriting it, which is the regression
+guard when you touch `add_features`:
+
+```bash
+$ python scripts/preprocess.py --check
+--check: 2,785 overlapping rows, 19 columns
+largest absolute difference: 0
+MATCH
+```
+
+**Training is champion-gated.** Metrics and params are logged every run because
+they cost nothing; the ~750 KB booster is written only when the run beats the
+best `val_mae` so far. A nightly retrain that always logged would add ~268 MB a
+year to say the same thing 365 times. `--as-of DATE` reproduces a past split;
+`--always-log-model` bypasses the gate.
+
+### Orchestration
+
+`dags/nyiso_pipeline.py` runs the three daily at 11:00 UTC (07:00 EDT, after EIA
+publishes), with both ingests in parallel and 2 retries per task — the APIs are
+free and public and occasionally return 5xx.
+
+```
+ingest_eia  ──┐
+              ├──> preprocess ──> train
+ingest_noaa ──┘
+```
+
+```bash
+cp .env.airflow.example .env.airflow    # add your API keys
+docker compose --env-file .env.airflow up -d
+open http://localhost:8080              # airflow / airflow
+```
+
+`catchup` is off deliberately: ingest is incremental against a high-water mark,
+so backfilled runs would just refetch the same window.
 
 ## Notebook map
 
@@ -181,11 +251,13 @@ Stated plainly, because a forecast with unstated assumptions is a liability.
 
 - [ ] Repeat §5–8 for the **weekly** target (`weekly_total_mwh`)
 - [ ] Switch the EIA pull to `frequency="local-hourly"` and re-score (limitation 3)
-- [ ] Extract §1–4 into a standalone `preprocess.py` and §5–6 into `train.py`
+- [x] Extract §1–4 into `scripts/ingest.py` + `scripts/preprocess.py`, §5–6b into `scripts/train.py`
+- [x] Orchestrate the three as an Airflow DAG (`dags/nyiso_pipeline.py`)
 - [ ] Rolling-origin backtest across several folds for an annual error figure
 - [ ] Point the MLflow tracking URI at a persistent server, not local `mlruns/`
-- [ ] Register the first model in the MLflow / SageMaker Model Registry as the
-      "champion" for future runs to beat
+- [~] Champion gating — `train.py` compares against the best `val_mae` in the
+      experiment and only then writes an artifact. Still not a real Model
+      Registry entry with stages/aliases.
 
 > **Note on the notebook's own "Next steps" cell:** it currently checks off
 > `scripts/nyiso_preprocess.py`, `scripts/nyiso_train.py` and `make` targets
