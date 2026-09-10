@@ -14,6 +14,11 @@ grid operations.
 tracking — end-to-end on a laptop, before any AWS or pipeline infrastructure is
 wired up. Everything lives in one notebook on purpose.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/forecast-dark.png">
+  <img alt="Line chart of actual vs. forecast NYISO daily peak demand over the 56-day validation window, Jul 6 – Aug 30 2026. The XGBoost forecast tracks actual demand with a mean absolute error of 747 MW, 34% lower than the persistence baseline's 1,137 MW." src="docs/images/forecast-light.png">
+</picture>
+
 ---
 
 ## How it works
