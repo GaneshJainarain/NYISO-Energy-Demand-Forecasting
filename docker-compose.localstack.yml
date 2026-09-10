@@ -1,0 +1,28 @@
+# Local AWS emulator - lets the Terraform in infra/ create real-shaped S3,
+# Lambda, IAM and API Gateway resources without an AWS account or a bill.
+#
+#   docker compose -f docker-compose.localstack.yml up -d
+#
+# Kept separate from docker-compose.yml (Airflow) so the two stacks start,
+# stop and break independently.
+
+services:
+  localstack:
+    image: localstack/localstack:4
+    ports:
+      - "4566:4566"          # single edge port for every AWS service
+    environment:
+      SERVICES: s3,lambda,apigateway,iam,sts,logs,events
+      DEBUG: "0"
+      # Lambda runs as sibling containers on the host daemon.
+      LAMBDA_DOCKER_NETWORK: ""
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - "./.localstack:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s

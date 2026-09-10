@@ -49,6 +49,11 @@ Worst single day: 2026-07-16, 2,380 MW off.
 │   ├── ingest.py                     # EIA + NOAA → data/raw/*.parquet (incremental)
 │   ├── preprocess.py                 # raw → features + weekly totals
 │   └── train.py                      # split, XGBoost, MLflow, champion gate
+│   └── export_model.py               # champion run → artifacts/ for serving
+├── serving/
+│   ├── handler.py                    # Lambda inference (numpy only, no pandas)
+│   └── build.sh                      # builds lambda.zip, pins xgboost to metadata
+├── infra/                            # Terraform: S3 + Lambda + API Gateway + IAM
 ├── dags/nyiso_pipeline.py            # Airflow DAG wiring the three together
 ├── docker-compose.yml                # local Airflow (postgres + scheduler + API)
 ├── Dockerfile.airflow
@@ -161,6 +166,84 @@ open http://localhost:8080              # airflow / airflow
 `catchup` is off deliberately: ingest is incremental against a high-water mark,
 so backfilled runs would just refetch the same window.
 
+---
+
+## Serving the model (AWS, mocked locally)
+
+The trained model is served behind an HTTP API. The AWS shape is real - S3,
+Lambda, API Gateway, IAM - but it runs against
+[LocalStack](https://localstack.cloud), so it costs nothing and needs no AWS
+account. One variable switches the same Terraform to real AWS.
+
+```
+        +-------------+
+POST -> | API Gateway |  public HTTPS
+        +------+------+
+               |
+        +------v------+      +-----+
+        |   Lambda    | ---> | S3  |  model.ubj + recent.json + metadata.json
+        |  (python)   |      +-----+
+        +-------------+
+```
+
+```bash
+docker compose -f docker-compose.localstack.yml up -d   # free local AWS
+python scripts/export_model.py                          # champion -> artifacts/
+./serving/build.sh                                      # -> serving/lambda.zip
+cd infra && terraform init && terraform apply -auto-approve
+```
+
+```bash
+URL=$(terraform output -raw api_url)
+
+curl -s "$URL/health"
+
+curl -s -X POST "$URL/predict" -H 'Content-Type: application/json' \
+  -d '{"date":"2026-09-06","temp_max_f":92,"temp_min_f":74,"precip_in":0.0}'
+```
+```json
+{"date": "2026-09-06", "predicted_peak_mw": 24985.1,
+ "baseline_persistence_mw": 22910.0, "delta_vs_baseline_mw": 2075.1,
+ "model_run_id": "805fe2b3...", "model_val_mae": 747.4025}
+```
+
+The response carries the persistence baseline next to the prediction, so a
+caller can see the model's contribution rather than taking the number on trust.
+Sweeping temperature reproduces the U-curve end to end:
+
+| Conditions | Predicted peak |
+|---|---:|
+| hot 92/74F | 24,985 MW |
+| warm 78/62F | 20,370 MW |
+| mild 68/55F | 19,908 MW |
+| cold 34/22F | 21,351 MW |
+
+### Going to real AWS
+
+```bash
+terraform apply -var use_localstack=false
+```
+
+Nothing else changes. Cost at portfolio traffic is a few cents a month: S3
+storage, Lambda's free tier, API Gateway at $1/million requests. There is no
+always-on compute - deliberately no SageMaker endpoint, which would be ~$50 a
+month to answer the same question.
+
+### Two things that bite here
+
+**xgboost versions must match exactly between training and serving.** An older
+xgboost reading a newer model file silently drops `base_score` and returns raw
+tree sums - predictions near zero instead of ~20,000 MW, with no error raised.
+This happened during development. The defences: `export_model.py` records
+`xgboost_version` in `metadata.json`, `build.sh` pins the zip to it, and the
+handler refuses to load on a mismatch.
+
+**The Lambda zip runs close to the size limit.** xgboost pulls in scipy and the
+package lands at ~194 MB unzipped against a 250 MB ceiling. pandas would not
+fit, which is why the handler builds its feature vector with plain numpy. Note
+also that `serving/build.sh` targets `manylinux_2_28`, not `manylinux2014` -
+the older tag silently resolves xgboost down to 3.0.5.
+
 ## Notebook map
 
 | § | Contents |
@@ -254,6 +337,8 @@ Stated plainly, because a forecast with unstated assumptions is a liability.
 - [x] Extract §1–4 into `scripts/ingest.py` + `scripts/preprocess.py`, §5–6b into `scripts/train.py`
 - [x] Orchestrate the three as an Airflow DAG (`dags/nyiso_pipeline.py`)
 - [ ] Rolling-origin backtest across several folds for an annual error figure
+- [x] Serve the model over HTTP (S3 + Lambda + API Gateway, LocalStack-backed)
+- [x] Serve the model over HTTP (S3 + Lambda + API Gateway, LocalStack-backed)
 - [ ] Point the MLflow tracking URI at a persistent server, not local `mlruns/`
 - [~] Champion gating — `train.py` compares against the best `val_mae` in the
       experiment and only then writes an artifact. Still not a real Model

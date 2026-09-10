@@ -142,7 +142,15 @@ def main():
 
         # --- champion gate ---
         if args.always_log_model or champion is None or m["mae"] < champion:
-            mlflow.xgboost.log_model(model, name="model")
+            # Log the raw booster rather than mlflow.xgboost.log_model. The
+            # sklearn-flavored path drags XGBRegressor through scikit-learn's
+            # estimator-tag machinery, which breaks across xgboost/sklearn
+            # version combinations - and serving only ever needs the booster.
+            import tempfile
+            with tempfile.TemporaryDirectory() as td:
+                booster_path = Path(td) / "model.ubj"
+                model.get_booster().save_model(str(booster_path))
+                mlflow.log_artifact(str(booster_path), artifact_path="model")
             was = "cold start" if champion is None else f"beat {champion:.2f}"
             print(f"logged model artifact ({was})")
             mlflow.set_tag("champion", "true")

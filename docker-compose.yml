@@ -18,6 +18,9 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    # Airflow 3 auth. SimpleAuthManager generates this user's password into
+    # $AIRFLOW_HOME/simple_auth_manager_passwords.json.generated on first boot.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "airflow:admin"
     # Credentials for scripts/ingest.py, passed through from .env.airflow.
     EIA_API_KEY: ${EIA_API_KEY}
     NOAA_TOKEN: ${NOAA_TOKEN}
@@ -93,11 +96,6 @@ services:
       - -c
       - |
         airflow db migrate
-        airflow users create \
-          --username "${_AIRFLOW_WWW_USER_USERNAME:-airflow}" \
-          --password "${_AIRFLOW_WWW_USER_PASSWORD:-airflow}" \
-          --firstname admin --lastname admin --role Admin \
-          --email admin@example.com || true
     environment:
       <<: *airflow-common-env
     restart: on-failure
