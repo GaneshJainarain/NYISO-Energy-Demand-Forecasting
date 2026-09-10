@@ -16,6 +16,54 @@ wired up. Everything lives in one notebook on purpose.
 
 ---
 
+## How it works
+
+```mermaid
+flowchart TB
+    EIA["EIA API<br/>hourly NYISO demand"]
+    NOAA["NOAA API<br/>daily NYC weather"]
+
+    subgraph dag ["Airflow · daily at 11:00 UTC"]
+        ie["ingest_eia<br/>scripts/ingest.py"]
+        inn["ingest_noaa<br/>scripts/ingest.py"]
+        pp["preprocess<br/>scripts/preprocess.py"]
+        tr["train<br/>scripts/train.py"]
+        ie -->|"data/raw/demand_hourly.parquet"| pp
+        inn -->|"data/raw/weather_daily.parquet"| pp
+        pp -->|"data/nyiso_daily_features.csv"| tr
+    end
+
+    EIA --> ie
+    NOAA --> inn
+    tr -->|"metrics every run,<br/>model only when it beats the champion"| ml[("MLflow<br/>mlflow.db")]
+
+    subgraph deploy ["Deploy · run by hand"]
+        direction LR
+        ex["scripts/export_model.py<br/>champion → artifacts/"]
+        bd["serving/build.sh<br/>→ lambda.zip"]
+        tf["infra/<br/>terraform apply"]
+        ex --> bd --> tf
+    end
+
+    ml --> deploy
+
+    subgraph serve ["Serving · AWS, mocked locally by LocalStack"]
+        direction LR
+        client(["client"])
+        gw["API Gateway"]
+        fn["Lambda<br/>serving/handler.py"]
+        s3[("S3<br/>model.ubj · recent.json · metadata.json")]
+        client -->|"POST /predict"| gw --> fn -->|"loads on cold start"| s3
+    end
+
+    deploy -->|"creates + uploads"| serve
+```
+
+The daily Airflow run stops at MLflow. Getting a new champion model into the
+API is a manual step — see [Serving the model](#serving-the-model-aws-mocked-locally).
+
+---
+
 ## Results
 
 Trained on 2019-01-15 → 2026-07-05, validated on the held-out
